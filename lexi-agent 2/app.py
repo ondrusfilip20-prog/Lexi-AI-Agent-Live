@@ -1,24 +1,29 @@
 import os
+import json
 from openai import OpenAI
-from flask import Flask, request, jsonify 
-from flask_cors import CORS 
-from calendar_service import get_calendar_service, find_open_slots 
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from calendar_service import get_calendar_service, find_open_slots
 
 # --- 1. GLOBAL INITIALIZATION ---
-# 🚨 PASTE YOUR API KEY HERE
 client = OpenAI()
+
+# DEBUG: show which app module is loaded at startup (use stderr + flush to ensure it appears in logs)
+import sys
+sys.stderr.write(f"app module loaded from: {__file__}\n")
+sys.stderr.flush()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app) 
+CORS(app)
 
 # Initialize the Google Calendar connection once globally
 try:
-    calendar_service = get_calendar_service() 
+    calendar_service = get_calendar_service()
     print("Calendar Service Initialized.")
 except Exception as e:
     print(f"Error initializing calendar: {e}")
-    
+
 # --- 2. GLOBAL MEMORY STORE (System Prompt and History) ---
 SYSTEM_INSTRUCTION = """
 You are 'Lexi', an automated intake assistant for 'Miller Family Law'.
@@ -32,7 +37,8 @@ RULES & BEHAVIOR:
 5. BOOKING: If they are qualified (Family Law) and provide the opposing party's name, you will state: "Thank you. I have checked attorney Miller's calendar and can offer you the following open slots: [SLOTS HERE]."
 """
 
-SESSION_HISTORY = {} 
+SESSION_HISTORY = {}
+
 
 def get_session_messages(session_id):
     if session_id not in SESSION_HISTORY:
@@ -40,18 +46,67 @@ def get_session_messages(session_id):
             {"role": "system", "content": SYSTEM_INSTRUCTION}
         ]
     return SESSION_HISTORY[session_id]
+
+
+@app.route('/health', methods=['GET'])
+def health():
+    import inspect
+    cal_ok = False
+    cal_module_file = None
+    try:
+        cal_ok = calendar_service is not None
+        mod = inspect.getmodule(calendar_service)
+        cal_module_file = getattr(mod, '__file__', None)
+    except Exception:
+        cal_ok = False
+
+    return jsonify({
+        'calendar_initialized': bool(cal_ok),
+        'calendar_module_file': cal_module_file
+    })
+
+
 @app.route('/chat', methods=['POST'])
 def chat():
     # 1. Get user message and session ID from the web request
     try:
-        data = request.get_json()
-        user_input = data.get('message')
-        session_id = data.get('session_id', 'default_user') 
+        # Try the normal JSON path first
+        data = request.get_json(silent=True)
+
+        # If no JSON parsed, also try raw body / form parsing to be resilient
+        raw_body = None
+        if data is None:
+            raw_body = request.get_data(as_text=True)
+            try:
+                data = json.loads(raw_body) if raw_body else {}
+            except Exception:
+                data = request.form.to_dict() if request.form else {}
+
+        if not isinstance(data, dict):
+            data = {}
+
+        # Accept multiple possible keys from clients: 'message', 'user_message', 'text', 'userMessage'
+        user_input = (
+            data.get('message')
+            or data.get('user_message')
+            or data.get('userMessage')
+            or data.get('text')
+        )
+        session_id = data.get('session_id', 'default_user')
+
+        # Debug logs to help diagnose why messages may be missing
+        print(f"DEBUG /chat headers: {dict(request.headers)}")
+        if raw_body is not None:
+            print(f"DEBUG /chat raw_body: {raw_body}")
+        else:
+            print(f"DEBUG /chat parsed body: {data}")
     except Exception:
         return jsonify({"error": "Invalid request format"}), 400
 
     if not user_input:
         return jsonify({"error": "No message provided"}), 400
+
+    print(f"DEBUG: Received message for session={session_id}: {user_input}")
 
     # 2. Get history and add new user message
     messages = get_session_messages(session_id)
@@ -59,22 +114,23 @@ def chat():
 
     # 3. Call the OpenAI API
     completion = client.chat.completions.create(
-        model="gpt-4o", 
+        model="gpt-4o",
         messages=messages
     )
-    
+
     bot_response = completion.choices[0].message.content
 
     # 4. TOOL USE LOGIC: Check for the calendar trigger
     if "offer you the following open slots" in bot_response:
         available_slots = find_open_slots(calendar_service)
-        slot_text = "\n* " + "\n* ".join(available_slots) 
+        slot_text = "\n* " + "\n* ".join(available_slots)
         bot_response = bot_response.replace("[SLOTS HERE]", slot_text)
 
     # 5. Save response to history and send back as JSON
     messages.append({"role": "assistant", "content": bot_response})
-    
+
     return jsonify({"response": bot_response})
+
+
 if __name__ == '__main__':
-    # Run the server locally on port 5000 
     app.run(debug=True, port=5000)
