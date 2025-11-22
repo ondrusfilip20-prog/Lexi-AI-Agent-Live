@@ -1,5 +1,9 @@
 import datetime
-import os.path
+import os
+import json
+
+# DEBUG: show which calendar_service module is loaded at startup
+print(f"calendar_service (lexi-agent) loaded from: {__file__}")
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -12,10 +16,19 @@ TOKEN_FILE = 'token.json'
 
 def get_calendar_service():
     """Handles Google login/authorization and returns the calendar API service object."""
-    creds = None
-    
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    # First try to load credentials from the environment (for deployments)
+    if 'GOOGLE_CALENDAR_TOKEN' in os.environ:
+        try:
+            token_data = json.loads(os.environ['GOOGLE_CALENDAR_TOKEN'])
+            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+        except Exception as e:
+            print(f"Failed to load GOOGLE_CALENDAR_TOKEN: {e}")
+            raise
+    else:
+        creds = None
+
+        if os.path.exists(TOKEN_FILE):
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
     
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:

@@ -1,6 +1,10 @@
 import datetime
 import os, os.path
 import json # Essential for reading the token from the environment variable
+import traceback
+
+# DEBUG: show which calendar_service module is loaded at startup
+print(f"calendar_service (root) loaded from: {__file__}")
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -22,15 +26,43 @@ def get_calendar_service():
         try:
             # Load credentials directly from the environment variable (JSON string)
             token_data = json.loads(os.environ['GOOGLE_CALENDAR_TOKEN'])
+        except Exception as e:
+            print(f"FATAL ERROR: GOOGLE_CALENDAR_TOKEN environment variable is invalid JSON: {e}")
+            traceback.print_exc()
+            raise
+
+        try:
             creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+
+            # Diagnostics: print which top-level keys are present (avoid printing secrets)
+            if isinstance(token_data, dict):
+                print(f"DEBUG: GOOGLE_CALENDAR_TOKEN keys: {list(token_data.keys())}")
+
+            # If credentials show expired and a refresh token exists, try to refresh.
+            if getattr(creds, 'expired', False):
+                print("DEBUG: Credentials appear expired.")
+                if getattr(creds, 'refresh_token', None):
+                    try:
+                        creds.refresh(Request())
+                        print("DEBUG: Credentials refreshed successfully.")
+                    except Exception as e:
+                        print(f"DEBUG: Failed to refresh credentials: {e}")
+                        traceback.print_exc()
+                        raise
+                else:
+                    print("DEBUG: No refresh token available in credentials; refresh not possible.")
+            else:
+                print("DEBUG: Credentials are valid (not expired).")
+
             service = build('calendar', 'v3', credentials=creds)
-            
+
             # CRITICAL: Returns immediately for the successful deployment
             return service 
         except Exception as e:
-            # If loading fails, something is wrong with the JSON string itself
-            print(f"FATAL ERROR: GOOGLE_CALENDAR_TOKEN environment variable is invalid: {e}")
-            raise e 
+            # If loading fails, give more context in the logs
+            print(f"FATAL ERROR: Could not initialize calendar from GOOGLE_CALENDAR_TOKEN: {e}")
+            traceback.print_exc()
+            raise
 
     # If the environment variable is not set (should not happen on Render)
     print("FATAL ERROR: GOOGLE_CALENDAR_TOKEN environment variable not found. Calendar tool is disabled.")
