@@ -9,8 +9,10 @@ from calendar_service import get_calendar_service, find_open_slots
 # 🚨 PASTE YOUR API KEY HERE
 client = OpenAI()
 
-# DEBUG: show which app module is loaded at startup
-print(f"app module loaded from: {__file__}")
+# DEBUG: show which app module is loaded at startup (use stderr + flush to ensure it appears in logs)
+import sys
+sys.stderr.write(f"app module loaded from: {__file__}\n")
+sys.stderr.flush()
 
 # Initialize Flask app
 app = Flask(__name__)
