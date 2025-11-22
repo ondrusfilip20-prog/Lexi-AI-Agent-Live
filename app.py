@@ -1,4 +1,5 @@
 import os
+import json
 from openai import OpenAI
 from flask import Flask, request, jsonify 
 from flask_cors import CORS 
@@ -44,14 +45,41 @@ def get_session_messages(session_id):
 def chat():
     # 1. Get user message and session ID from the web request
     try:
-        data = request.get_json()
-        user_input = data.get('message')
-        session_id = data.get('session_id', 'default_user') 
+        # Try the normal JSON path first
+        data = request.get_json(silent=True)
+
+        # If no JSON parsed, also try raw body / form parsing to be resilient
+        raw_body = None
+        if data is None:
+            raw_body = request.get_data(as_text=True)
+            # Attempt to parse raw body as JSON
+            try:
+                data = json.loads(raw_body) if raw_body else {}
+            except Exception:
+                # Fall back to form data or empty dict
+                data = request.form.to_dict() if request.form else {}
+
+        if not isinstance(data, dict):
+            data = {}
+
+        # Accept multiple possible keys from clients: 'message', 'user_message', 'text'
+        user_input = data.get('message') or data.get('user_message') or data.get('text')
+        session_id = data.get('session_id', 'default_user')
+
+        # Debug logs to help diagnose why messages may be missing
+        print(f"DEBUG /chat headers: {dict(request.headers)}")
+        if raw_body is not None:
+            print(f"DEBUG /chat raw_body: {raw_body}")
+        else:
+            print(f"DEBUG /chat parsed body: {data}")
     except Exception:
         return jsonify({"error": "Invalid request format"}), 400
 
     if not user_input:
         return jsonify({"error": "No message provided"}), 400
+
+    # Small debug log for incoming messages (appears in Render logs)
+    print(f"DEBUG: Received message for session={session_id}: {user_input}")
 
     # 2. Get history and add new user message
     messages = get_session_messages(session_id)
