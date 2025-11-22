@@ -41,6 +41,26 @@ def get_session_messages(session_id):
             {"role": "system", "content": SYSTEM_INSTRUCTION}
         ]
     return SESSION_HISTORY[session_id]
+@app.route('/health', methods=['GET'])
+def health():
+    """Health endpoint that returns whether the calendar client initialized
+    and which calendar_service module file is loaded. Useful for quick deploy checks.
+    """
+    import inspect
+    cal_ok = False
+    cal_module_file = None
+    try:
+        # `calendar_service` is a Resource object from googleapiclient.discovery
+        cal_ok = calendar_service is not None
+        mod = inspect.getmodule(calendar_service)
+        cal_module_file = getattr(mod, '__file__', None)
+    except Exception:
+        cal_ok = False
+
+    return jsonify({
+        'calendar_initialized': bool(cal_ok),
+        'calendar_module_file': cal_module_file
+    })
 @app.route('/chat', methods=['POST'])
 def chat():
     # 1. Get user message and session ID from the web request
@@ -62,8 +82,13 @@ def chat():
         if not isinstance(data, dict):
             data = {}
 
-        # Accept multiple possible keys from clients: 'message', 'user_message', 'text'
-        user_input = data.get('message') or data.get('user_message') or data.get('text')
+        # Accept multiple possible keys from clients: 'message', 'user_message', 'text', 'userMessage'
+        user_input = (
+            data.get('message')
+            or data.get('user_message')
+            or data.get('userMessage')
+            or data.get('text')
+        )
         session_id = data.get('session_id', 'default_user')
 
         # Debug logs to help diagnose why messages may be missing
