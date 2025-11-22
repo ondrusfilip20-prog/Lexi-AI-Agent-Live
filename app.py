@@ -9,6 +9,9 @@ from calendar_service import get_calendar_service, find_open_slots
 # 🚨 PASTE YOUR API KEY HERE
 client = OpenAI()
 
+# DEBUG: show which app module is loaded at startup
+print(f"app module loaded from: {__file__}")
+
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app) 
