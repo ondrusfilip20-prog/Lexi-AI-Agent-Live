@@ -6,13 +6,30 @@ from flask_cors import CORS
 from calendar_service import get_calendar_service, find_open_slots 
 
 # --- 1. GLOBAL INITIALIZATION ---
-# 🚨 PASTE YOUR API KEY HERE
-client = OpenAI()
+# Initialize OpenAI client only when OPENAI_API_KEY is present.
+# This allows running the app locally for dev without requiring a key.
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
+if OPENAI_API_KEY:
+    client = OpenAI(api_key=OPENAI_API_KEY)
+else:
+    client = None
+    import sys
+    sys.stderr.write("WARNING: OPENAI_API_KEY not set — starting in local dev mode without OpenAI.\n")
+    sys.stderr.flush()
 
 # DEBUG: show which app module is loaded at startup (use stderr + flush to ensure it appears in logs)
 import sys
 sys.stderr.write(f"app module loaded from: {__file__}\n")
 sys.stderr.flush()
+
+# Startup banner for Render: prints absolute path and PID so logs show exactly which file is running
+import os
+try:
+    banner = f"=== STARTUP BANNER: app module={os.path.abspath(__file__)} PID={os.getpid()} ===\n"
+    sys.stderr.write(banner)
+    sys.stderr.flush()
+except Exception:
+    pass
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -115,13 +132,18 @@ def chat():
     messages = get_session_messages(session_id)
     messages.append({"role": "user", "content": user_input})
 
-    # 3. Call the OpenAI API
-    completion = client.chat.completions.create(
-        model="gpt-4o", 
-        messages=messages
-    )
-    
-    bot_response = completion.choices[0].message.content
+    # 3. Call the OpenAI API (or return a mock response in dev mode)
+    if client is None:
+        bot_response = (
+            "[Local dev mode] OPENAI_API_KEY not set. "
+            "This is a mock assistant response."
+        )
+    else:
+        completion = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages
+        )
+        bot_response = completion.choices[0].message.content
 
     # 4. TOOL USE LOGIC: Check for the calendar trigger
     if "offer you the following open slots" in bot_response:
